@@ -287,7 +287,7 @@ _**applicationNamePrefix**_
 
 图 3-2 展示了配置好 Presto 连接的 SQuirreL SQL Client，正在进行一些查询：
 
-![&#x56FE; 3-2](../.gitbook/assets/image%20%289%29.png)
+![&#x56FE; 3-2](../.gitbook/assets/image%20%2810%29.png)
 
 ## Presto 与 ODBC
 
