@@ -70,6 +70,10 @@ Presto 工作节点是 Presto 集群中的服务者。 它负责执行协调器�
 
 ## 基于 Connector 的架构
 
+基于 connector 的架构是 Presto 计算存储的核心。connector 使得 Presto 可以连接任意的数据源。
+
+每一个 connector 都对它底层的数据源提供了表级别的抽象。只要一种数据可以被映射成 Presto 中表、列、行的概念，那么就可以创建一个 connector 对该数据进行查询。
+
 
 
 ## Catalogs，Schemas 和 Tables
