@@ -74,11 +74,77 @@ Presto 工作节点是 Presto 集群中的服务者。 它负责执行协调器�
 
 每一个 connector 都对它底层的数据源提供了表级别的抽象。只要一种数据可以被映射成 Presto 中表、列、行的概念，那么就可以创建一个 connector 对该数据进行查询。
 
+Presto 提供了一种服务发现接口（Service Provider Interface，SPI），一种可以实现 connector 的 API。通过在 connector 中实现该接口，Presto 可以在内部连接任意的数据源并执行操作。connector 内部负责处理连接的细节。
 
+每一个 connector 都要实现 API 的三个部分：
+
+* 获取 table/view/schema 元信息的操作
+* 使数据根据逻辑单元分区的操作，可以让 Presto 并行读写数据
+* 定义数据的 source 和 sink，用于将源数据转换为查询引擎期望的内存格式或从内存格式转换为源数据
+
+Presto 提供了非常多的连接器，比如 HDFS/Hive，MySQL，PostgreSQL，MS SQL Server，Kafka，Cassandra，Redis 等。在第6、第7章，你将接触到这些连接器。可用的连接器种类正在被不断的添加。
+
+Presto 的 SPI 机制同样允许用户创建自己的定制化 connector。当你需要连接的数据源没有已经实现的 connector，这会变得极为有用。当你创建完一个自己的连接器时，我们强烈建议你多和 Presto 开源社区沟通，贡献你的连接器。当你的公司有一个定制化的数据源时，定制连接器也会很重要。这就是 Presto 如何实现 “SQL 查一切“ 功能的过程。
+
+图4-5 展示了 Presto SPI 在 coordinator 中的接口：元数据，数据分析，数据位置；同样，在 worker 中，也有数据处理的接口。
+
+![&#x56FE; 4-5](../.gitbook/assets/figure-4-5-overview-of-the-presto-service-provider-interface-spi.png)
+
+在 Presto 服务启动时，连接器是以插件的形式加载的。在  catalog 的配置文件中配置好以后，就可以从插件的文件夹被加载到。我们在第6章会详细讨论。
+
+{% hint style="info" %}
+提示：Presto 插件化的架构体现在很多方面：事件监听器，权限控制，函数、类型管理，等等。
+{% endhint %}
 
 ## Catalogs，Schemas 和 Tables
 
+之前已经讨论过，Presto 使用了基于连接器的架构来处理所有的查询。每一个  catalog 都被配置到了一种数据源上。一个  catalog 中可能有多个 schema。一个 schema 中有多个 table，每个 table 又会提供不同的行、数据类型。我们在第8章会详细讨论。
+
 ## 查询执行模型
+
+现在你已经了解了 Presto 集群的构成，以及协调节点和工作节点各自的作用。现在我们看一下 SQL 语句是如何被处理的。
+
+{% hint style="info" %}
+提示：第8、第9章详细描述了 Presto 对 SQL 的支持。
+{% endhint %}
+
+了解查询执行模型可以让你拥有足够的 SQL 查询调优知识。
+
+回想一下，协调节点使用 ODBC 或 JDBC 驱动程序或其他客户端，从命令行接受最终用户的 SQL 语句。然后，协调节点触发工作节点从数据源获取所有数据，创建结果数据集，并将其提供给客户端。
+
+让我们先仔细研究一下协调节点内部发生的情况。将 SQL 语句提交给协调节点后，它将以文本格式接收。协调节点获取该文本并进行解析和分析。 然后，它使用 Presto 中的内部数据结构（称为查询计划）创建执行计划。该流程如图4-6 所示。查询计划概括地表示了处理数据并根据 SQL 语句返回结果所需的步骤。
+
+![&#x56FE; 4-6](../.gitbook/assets/figure-4-6-processing-a-sql-query-statement-to-create-a-query-plan.png)
+
+如图4-7，查询计划生成器使用元数据 SPI 和数据分析 SPI 来创建查询计划。所以协调节点是通过 SPI 直接获取数据源中表的元信息。
+
+![&#x56FE; 4-7](../.gitbook/assets/figure-4-7-the-service-provider-interfaces-for-query-planning-and-scheduling.png)
+
+协调节点使用元数据 SPI 获取表、列、类型的信息。这些信息被用来验证查询在语义上是合法的，同时被用来在安全检查中进行类型、表达式的验证。
+
+分析 SPI 被用来获取表的行数、表的尺寸大小，以用于构造基于代价的查询计划。
+
+数据位置 SPI 可以加快分布式查询计划的生成。它用来生成表的逻辑切分（split）计划。切片（splits）是并行工作的最小单元。
+
+{% hint style="info" %}
+Presto 中不同的 SPI 更像是概念上的分离； 实际的底层 Java API 以更细粒度的方式由不同的 Java 包分隔。
+{% endhint %}
+
+分布式查询计划是由一个或多个阶段（stage）组成的简单查询计划的扩展。简单查询计划分为多个计划片段。阶段（stage）是计划片段的运行时状态，它包含该阶段的计划片段描述的工作的所有任务。
+
+协调节点分解执行计划，以允许在集群上处理查询，从而使工作节点可以并行执行，从而加快了整体查询的速度。具有多个阶段的查询会导致需要创建阶段的依赖关系树。阶段数取决于查询的复杂性。例如，查询表，返回的列，JOIN 语句，WHERE 条件，GROUP BY 操作和其他 SQL 语句都会影响创建的阶段数。
+
+图 4-8 展示了在集群的协调节点中，逻辑查询计划是如何被转化成分布式执行计划的。
+
+![&#x56FE; 4-8](../.gitbook/assets/figure-4-8-transformation-of-the-query-plan-to-a-distributed-query-plan.png)
+
+分布式查询计划定义了在 Presto 群集上执行查询的阶段和方式。协调节点使用它来进一步计划和安排整个工作节点的任务。一个阶段包含一个或多个任务。通常，查询过程会涉及许多任务，每个任务处理一部分数据。
+
+协调节点从阶段（stage）中拆解出具体的任务（task），再分配给工作节点，如图 4-9所示。
+
+![&#x56FE; 4-9](../.gitbook/assets/figure-4-9-task-management-performed-by-the-coordinator.png)
+
+
 
 ## 查询计划
 
