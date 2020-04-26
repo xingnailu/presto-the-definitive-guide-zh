@@ -150,9 +150,77 @@ Presto 中不同的 SPI 更像是概念上的分离； 实际的底层 Java API 
 
 源阶段的任务以页面（page）形式生成数据，这些数据是列格式的行的集合。这些页面流向其他中间下游阶段。交换操作器在阶段之间转移页面（page），交换操作器从上游阶段的任务中读取数据。
 
-源任务使用数据源 SPI 在连接器的帮助下从基础数据源中获取数据。该数据以页面（page）的形式显示给Presto，并在查询引擎中流动。操作器根据其语义来处理和生成页面。例如，过滤操作可以删除行，投影操作可以生成带有新列的页面（page），等等。任务中运算符的序列称为管道。管道的最后一个运算符通常将其输出页放在任务的输出缓冲区中。下游任务中的交换（exchange\) 操作器会消费上游任务输出缓冲区中的页面（page）。所有这些操作在不同的工作线程上并行发生，如图4-10所示。
+源任务使用数据源 SPI 在连接器的帮助下从基础数据源中获取数据。该数据以页面（page）的形式显示给Presto，并在查询引擎中流动。处理器（operator）根据其语义来处理和生成页面。例如，过滤操作可以删除行，投影操作可以生成带有新列的页面（page），等等。任务中运算符的序列称为管道。管道的最后一个运算符通常将其输出页放在任务的输出缓冲区中。下游任务中的交换（exchange\) 操作器会消费上游任务输出缓冲区中的页面（page）。所有这些操作在不同的工作线程上并行发生，如图4-10所示。
+
+![&#x56FE; 4-10](../.gitbook/assets/figure-4-10-data-in-splits-is-transferred-between-tasks-and-processed-on-different-workers.png)
+
+当查询计划被分配到具体的工作节点时，它的运行时的表现内容，就叫做 task。当一个 task 创建后，会为每一个分割操作实例化一个 driver。每一个 driver 又是数据在分割（split）时的操作和转化的表现内容。一个 task 可能有一个或多个 driver，具体的数量根据 Presto 的配置而定，如图 4-11。一旦所有 driver 的工作都完成，数据会被传输到下一个分割工作流，当前阶段的 driver 和 task 将会在完成任务后被销毁。
+
+![&#x56FE; 4-11](../.gitbook/assets/figure-4-11-parallel-drivers-in-a-task-with-input-and-output-splits.png)
+
+处理器（operator）的作用是处理输入的数据，并发送到下一个处理器。扫描表（table scan），过滤（filter），关联（joins），聚合（aggregations）等等都是处理器。一系列的处理器构成了处理器的工作流（pipeline）。举个例子，一个处理器的工作流可能是先扫描和读取表，然后过滤数据，最后进行聚合。
+
+为了进行查询，协调节点根据数据的元信息构造了一系列的分割操作。通过这些分割操作，协调节点开始在工作节点之间调度任务，以获取分割的数据。在查询执行时，协调节点会追踪到所有的可用分割，以及数据位置，另外还有任务的运行节点。当一个任务执行结束，并且向下游构造更多的数据分割时，协调节点持续调度任务，直到没有新的数据分割产生。
+
+一旦所有的分割完成，所有的数据都可以用，那么协调节点就可以让结果对用户可见了。
 
 ## 查询计划
+
+在深入研究 Presto 查询计划的实现和基于代价的优化工作之前，让我们先提供一个示例查询作为我们探索的引子，以帮助您了解查询计划的生成过程。
+
+示例代码 4-1 使用了 TPC-H 的数据集（参见：Presto TPC-H 和 TPC-DS 连接器），查询订单的汇总值，并根据国家区分，同时列出前五的国家。
+
+{% code title="示例4-1" %}
+```text
+SELECT
+    (SELECT name FROM region r WHERE regionkey = n.regionkey) AS region_name,
+    n.name AS nation_name,
+    sum(totalprice) orders_sum
+FROM nation n, orders o, customer c
+WHERE n.nationkey = c.nationkey
+  AND c.custkey = o.custkey
+GROUP BY n.nationkey, regionkey, n.name
+ORDER BY orders_sum DESC
+LIMIT 5;
+```
+```
+{% endcode %}
+
+让我们试着了解这个 SQL 的结构以及它的目的：
+
+* 首先，`SELECT` 操作查询了 `FROM` 后面的三张表，隐含地表明需要对 nation，orders，customer 这三张表做 `CROSS JOIN`
+* `WHERE` 条件用来过滤保留 nation，orders，customer 三张表中的匹配数据
+* `GROUP BY regionkey` 的操作用来根据国家聚合 order 的值
+* 子查询 `(SELECT name FROM region WHERE regionkey = n.regionkey)`从 region 表中获取国家名；注意这个操作是相关的，就像要对结果集
+
+  的每一行都要做这个操作
+
+* 排序语句 `ORDER BY orders_sum DESC` ，在返回结果前排序
+* `limit` 语句定义了只返回数据最大的5条记录
+
+### 词法分析、语法和语义分析
+
+当查询可以被执行前，查询语句需要被解析和分析。查询语句的构造可以在第8章、第9章中了解更多细节。Presto 首先会验证一些语法的正确性，然后，将会分析查询语句：
+
+_**识别查询了哪些表**_
+
+ 根据 catalog、schema 可以确定一个表，所以多个表可以有相同的 table 名。举例，TPC-H 的数据中，提供了同名不同 schema 的多个表，比如 `sf10.orders`，`sf100.orders`，等等。
+
+_**识别查询涉及的列**_
+
+`orders.totalprice` 这样的语句明确的指出了这是在查询 `orders` 表的 `totalprice` 字段。然而，某些情况下我们也可以只指定 `totalprice` 字段，而不用指定来自哪个表，如查询 4-1。Presto 的分析器可以决定使用哪个表的字段。
+
+_**识别字段的归属**_
+
+表达式 `c.bonus` 可能是表示一个表名为 `c` ，也可能是一个表的别名为 `c`，又或者表示一种 `Row` 的类型。如何定义字段的性质和归属，以免产生歧义，是 Presto 分析器的工作。分析需要遵循 SQL 语言的范围和可见性规则。 之后将在计划过程中使用收集到的信息（例如标识符歧义消除）。因此执行计划生成器无需再次了解查询语言的各种规则。
+
+如你所见，查询分析器具有复杂且跨领域的职责。它的作用是非常技术性的，并且从查询的角度来看，只要查询正确，它就对用户不可见。每当查询违反 SQL 语言规则，超出用户权限或由于其他某些原因而报错时，分析器就会让人感觉到它的存在。
+
+分析完查询，并处理和解析了查询中的所有标识符后，Presto 进入下一阶段，即生成查询计划。
+
+### 初始化查询计划
+
+
 
 ## 优化规则
 
