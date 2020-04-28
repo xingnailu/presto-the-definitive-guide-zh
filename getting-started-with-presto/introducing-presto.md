@@ -207,7 +207,7 @@ Presto 向支持 SQL 的平台提供越来越多的数据，并将查询扩展�
 
 现在，您可以使用 Presto CLI 将数据集放入内存目录的默认架构中的Iris 表中：
 
-```text
+```bash
 $ presto -f iris-data-set/iris-data-set.sql
 USE
 CREATE TABLE
@@ -216,7 +216,7 @@ INSERT: 150 rows
 
 确认数据可查：
 
-```text
+```bash
 $ presto --execute 'SELECT * FROM memory.default.iris;'
 "5.1","3.5","1.4","0.2","setosa"
 "4.9","3.0","1.4","0.2","setosa"

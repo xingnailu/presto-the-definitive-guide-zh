@@ -12,19 +12,19 @@ Presto 提供了 Docker 容器，让用户很容易构建一个初始的运行�
 
 使用 Docker 下载容器镜像（原书中没有这一步）：
 
-```text
+```bash
 $ docker pull prestosql/presto:latest
 ```
 
 启动容器，命名为 `presto-trail`，并在后台运行：
 
-```text
+```bash
 $ docker run -d --name presto-trial prestosql/presto
 ```
 
 现在可以连接到容器，并且使用 Presto 的命令行工具：Presto。它可以连接到容器中运行的 Presto。在命令行中，你可以执行对 `tpch` 数据的查询：
 
-```text
+```bash
 $ docker exec -it presto-trial presto
 presto> select count(*) from tpch.sf1.nation;
  _col0
@@ -47,7 +47,7 @@ Splits: 21 total, 21 done (100.00%)
 
 当需要停止并移除容器时，执行以下操作：
 
-```text
+```bash
 $ docker stop presto-trial
 presto-trial
 $ docker rm presto-trial
@@ -56,7 +56,7 @@ presto-trial
 
 当你需要使用时，可以再次运行该容器。如果不再需要这个 Docker 镜像，请执行删除操作：
 
-```text
+```bash
 $ docker rmi prestosql/presto
 Untagged: prestosql/presto:latest
 ...
@@ -75,7 +75,7 @@ Presto 由 Java 语言开发，运行时需要 JVM 的支持。Presto 需要 LTS
 
 确认 `java` 已经被安装并可用：
 
-```text
+```bash
 $ java --version
 openjdk 11.0.4 2019-07-16
 OpenJDK Runtime Environment (build 11.0.4+11)
@@ -90,7 +90,7 @@ OpenJDK 64-Bit Server VM (build 11.0.4+11, mixed mode, sharing)
 
 确认 `python` 已经被安装并可用：
 
-```text
+```bash
 $ python --version
 Python 2.7.15+
 ```
@@ -105,14 +105,14 @@ Presto 的发行版可以在 Maven 中央仓库找到。服务端安装包后缀
 
 版本号越大，版本越新。比如下载 330 版本的 Presto：
 
-```text
+```bash
 $ wget https://repo.maven.apache.org/maven2/\
   io/prestosql/presto-server/330/presto-server-330.tar.gz
 ```
 
 解压：
 
-```text
+```bash
 $ tar xvzf presto-server-*.tar.gz
 ```
 

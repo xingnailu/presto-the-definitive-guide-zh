@@ -171,7 +171,7 @@ Presto 中不同的 SPI 更像是概念上的分离； 实际的底层 Java API 
 示例代码 4-1 使用了 TPC-H 的数据集（参见：Presto TPC-H 和 TPC-DS 连接器），查询订单的汇总值，并根据国家区分，同时列出前五的国家。
 
 {% code title="示例4-1" %}
-```text
+```sql
 SELECT
     (SELECT name FROM region r WHERE regionkey = n.regionkey) AS region_name,
     n.name AS nation_name,
@@ -220,7 +220,29 @@ _**识别字段的归属**_
 
 ### 初始化查询计划
 
+查询计划可以认为是一种获取查询结果的程序。回顾一下 SQL 的定义：用户通过 SQL 查询，从系统中获取想要的数据。和命令式编程不同，用户并不需要指定如何去获取数据。这些获取数据的具体细节，被包裹在查询计划生成器和优化器中，它们共同决定了如何返回想要的结果。
 
+获取查询结果的步骤，就被称作：查询计划（query plan）。从理论上讲，指数级别的查询计划可以产生相同的查询结果。不同查询计划的性能差异很大，这就是为什么 Presto 查询计划器和优化器试图确定最佳的计划。总是产生相同结果的计划称为等效计划。
+
+让我们看看一下前面示例4-1中显示的查询。此查询最直接的查询计划是与查询的 SQL 语法结构最相似的查询计划。 该计划如示例4-2所示。 为了便于讨论，查询计划应该是不言自明的。你只需要知道计划是一棵树，并且它的执行就从叶节点开始并沿着树结构向上进行。
+
+{% code title="示例4-2:简洁直接、易于理解的文本查询计划" %}
+```sql
+- Limit[5]
+  - Sort[orders_sum DESC]
+    - LateralJoin[2]
+      - Aggregate[by nationkey...; orders_sum := sum(totalprice)]
+       - Filter[c.nationkey = n.nationkey AND c.custkey = o.custkey]
+          - CrossJoin
+            - CrossJoin
+              - TableScan[nation]
+              - TableScan[orders]
+            - TableScan[customer]
+      - EnforceSingleRow[region_name := r.name]
+        - Filter[r.regionkey = n.regionkey]
+          - TableScan[region]
+```
+{% endcode %}
 
 ## 优化规则
 
